@@ -1,6 +1,6 @@
 from torch.utils.data import DataLoader,RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
-from utils import create_pretrain_dataset, get_optimizer_grouped_parameters, get_train_ds_config, set_random_seed
+from utils import create_pretrain_dataset, get_optimizer_grouped_parameters, get_train_ds_config, set_random_seed, plot_loss
 from argparse import ArgumentParser
 from transformers import AutoTokenizer
 import torch
@@ -38,6 +38,7 @@ parser.add_argument('--output_dir', type=str, default='./model_py/')
 parser.add_argument('--num_warmup_steps', type=int, default=1000)
 parser.add_argument('--num_train_epochs', type=int, default=2)
 parser.add_argument('--print_loss', type=bool, default=True)
+parser.add_argument('--loss_save_path', type=str, default='./loss_png/loss_plot.png', help='损失图像保存地址')
 
 def main():
     # 解析参数
@@ -127,6 +128,8 @@ def main():
     # perplexity = evaluation(model, eval_dataloader)
     # print_rank_0(f"ppl: {perplexity}", args.global_rank)
 
+    losses = [] 
+    train_start_time = time.time()
     for epoch in range(args.num_train_epochs):
         print_rank_0(
         f"Beginning of Epoch {epoch+1}/{args.num_train_epochs}, \
@@ -135,8 +138,6 @@ def main():
         train_dataloader.sampler.set_epoch(epoch)  # shuffle的作用
         
         model.train()
-    
-        train_start_time = time.time()
         for step, batch in enumerate(train_dataloader):
             # 添加数据验证
             # print(f"Rank {dist.get_rank()} batch data sample: {batch}") 
@@ -146,6 +147,7 @@ def main():
             batch = to_device(batch, device)
             outputs = model(**batch, use_cache=False)
             loss = outputs.loss
+            losses.append(loss.item())
 
             model.backward(loss)  # 执行反向传播
             # 验证梯度
@@ -157,11 +159,13 @@ def main():
             if args.print_loss and step % 10 == 0:  # 每10步打印一次
                 print(f"Epoch: {epoch}, Step: {step}, Rank: {dist.get_rank()}, loss = {loss.detach().float()}")
                 print('Time:{}'.format(end - start))
-        train_end_time = time.time()
-        formatted_time = format_seconds(train_start_time - train_end_time)
-        print_rank_0(f"Training completed successfully. Time spent: {formatted_time}.")
+    train_end_time = time.time()
+    formatted_time = format_seconds(train_start_time - train_end_time)
+    print_rank_0(f"Training completed successfully. Time spent: {formatted_time}.")
+    plot_loss(losses, args.loss_save_path)
     if args.output_dir is not None:
         print_rank_0('saving the final model ...', args.global_rank)
+        plot_loss()
 
     if args.global_rank == 0:
         save_hf_format(model, tokenizer, args.output_dir)

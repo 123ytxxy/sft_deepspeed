@@ -9,6 +9,7 @@ import torch
 import random
 from safetensors.torch import save_file as safe_save_file
 from deepspeed.accelerator import get_accelerator
+import matplotlib.pyplot as plt
 
 GLOBAL_BATCH_SIZE = 64
 MICRO_BATCH_SIZE = 32
@@ -257,6 +258,15 @@ def format_seconds(seconds):
     if secs > 0:
         parts.append(f"{secs} second{'s' if secs != 1 else ''}")
     return ', '.join(parts)
+
+def plot_loss(losses, save_path):
+    plt.plot(losses, label='Training Loss')
+    plt.xlabel('Step')
+    plt.ylabel('Loss')
+    plt.title('Training Loss Curve')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(save_path)
 
 if __name__ == '__main__':
     local_rank = int(os.environ['LOCAL_RANK'])
