@@ -11,7 +11,7 @@ from transformers import get_scheduler
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 import math
 import deepspeed
-from utils import print_rank_0, to_device, save_hf_format
+from utils import print_rank_0, to_device, save_hf_format, format_seconds
 from sft_utils import build_instruction_dataset, DataCollatorForSupervisedDataset
 from deepspeed import get_accelerator
 import time
@@ -124,10 +124,6 @@ def main():
 
     # 模型训练
     print_rank_0("***** Running training *****", args.global_rank)
-    print_rank_0(
-        f"***** Evaluating perplexity, \
-        Epoch {0}/{args.num_train_epochs} *****",
-        args.global_rank)
     # perplexity = evaluation(model, eval_dataloader)
     # print_rank_0(f"ppl: {perplexity}", args.global_rank)
 
@@ -140,6 +136,7 @@ def main():
         
         model.train()
     
+        train_start_time = time.time()
         for step, batch in enumerate(train_dataloader):
             # 添加数据验证
             # print(f"Rank {dist.get_rank()} batch data sample: {batch}") 
@@ -160,6 +157,9 @@ def main():
             if args.print_loss and step % 10 == 0:  # 每10步打印一次
                 print(f"Epoch: {epoch}, Step: {step}, Rank: {dist.get_rank()}, loss = {loss.detach().float()}")
                 print('Time:{}'.format(end - start))
+        train_end_time = time.time()
+        formatted_time = format_seconds(train_start_time - train_end_time)
+        print_rank_0(f"Training completed successfully. Time spent: {formatted_time}.")
     if args.output_dir is not None:
         print_rank_0('saving the final model ...', args.global_rank)
 

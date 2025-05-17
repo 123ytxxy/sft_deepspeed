@@ -244,6 +244,20 @@ def save_hf_format(model, tokenizer, output_dir):
     model_to_save.config.to_json_file(output_config_file)
     tokenizer.save_pretrained(output_dir)
 
+def format_seconds(seconds):
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+
+    parts = []
+    if hours > 0:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes > 0:
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+    if secs > 0:
+        parts.append(f"{secs} second{'s' if secs != 1 else ''}")
+    return ', '.join(parts)
+
 if __name__ == '__main__':
     local_rank = int(os.environ['LOCAL_RANK'])
     dist.init_process_group(backend="nccl", init_method="env://")
@@ -285,3 +299,5 @@ if __name__ == '__main__':
     # print("\n📄 解码后的文本示例:")
     # print(decoded)
     # torchrun --nproc_per_node=2 utils.py
+
+def plot_loss():
