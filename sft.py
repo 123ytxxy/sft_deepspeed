@@ -161,11 +161,11 @@ def main():
                 print('Time:{}'.format(end - start))
     train_end_time = time.time()
     formatted_time = format_seconds(train_start_time - train_end_time)
-    print_rank_0(f"Training completed successfully. Time spent: {formatted_time}.")
-    plot_loss(losses, args.loss_save_path)
+    
     if args.output_dir is not None:
         print_rank_0('saving the final model ...', args.global_rank)
-        plot_loss()
+        print_rank_0(f"Training completed successfully. Time spent: {formatted_time}.")
+        plot_loss(losses, args.loss_save_path)
 
     if args.global_rank == 0:
         save_hf_format(model, tokenizer, args.output_dir)

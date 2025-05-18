@@ -268,6 +268,9 @@ def plot_loss(losses, save_path):
     plt.grid(True)
     plt.savefig(save_path)
 
+
+
+
 if __name__ == '__main__':
     local_rank = int(os.environ['LOCAL_RANK'])
     dist.init_process_group(backend="nccl", init_method="env://")
@@ -310,4 +313,3 @@ if __name__ == '__main__':
     # print(decoded)
     # torchrun --nproc_per_node=2 utils.py
 
-def plot_loss():
