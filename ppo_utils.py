@@ -6,11 +6,12 @@ import datasets
 import torch
 from datasets import load_dataset, concatenate_datasets
 import transformers
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModel
 from torch.utils.data import DataLoader,RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 import torch
 from torch import nn
+import deepspeed
 
 def build_reward_dataset(tokenizer, data_path, max_seq_length, preprocessing_num_workers):
     """
@@ -225,3 +226,97 @@ class RewardModel(nn.Module):
             "chosen_mean_scores": chosen_mean_scores,
             "rejected_mean_scores": rejected_mean_scores,
         }
+
+# This function is a modified version of code available in the from_pretrained API of HuggingFace Transformers
+# The code is copied and modified from: https://github.com/huggingface/transformers/blob/5ee9693a1c77c617ebc43ef20194b6d3b674318e/src/transformers/modeling_utils.py#L498
+# This function helps load a HF format checkpoint into a DeepSpeed wrapped model that has been sharded using ZeRO Stage 3
+def load_state_dict_into_model(model_to_load=None,
+                               state_dict=None,
+                               start_prefix="",
+                               zero_stage=0):
+
+    # copy state_dict so _load_from_state_dict can modify it
+    metadata = getattr(state_dict, "_metadata", None)
+    state_dict = state_dict.copy()
+    if metadata is not None:
+        state_dict._metadata = metadata
+
+    error_msgs = []
+
+    # PyTorch's `_load_from_state_dict` does not copy parameters in a module's descendants
+    # so we need to apply the function recursively.
+    def load(module: nn.Module, state_dict, prefix=""):
+        local_metadata = {} if metadata is None else metadata.get(
+            prefix[:-1], {})
+        args = (state_dict, prefix, local_metadata, True, [], [], error_msgs)
+        # Parameters of module and children will start with prefix. We can exit early if there are none in this
+        # state_dict
+        if len([key for key in state_dict if key.startswith(prefix)]) > 0:
+            if zero_stage == 3:
+                # In sharded models, each shard has only part of the full state_dict, so only gather
+                # parameters that are in the current state_dict.
+                named_parameters = dict(
+                    module.named_parameters(prefix=prefix[:-1], recurse=False))
+                params_to_gather = [
+                    named_parameters[k] for k in state_dict.keys()
+                    if k in named_parameters
+                ]
+                if len(params_to_gather) > 0:
+                    # because zero3 puts placeholders in model params, this context
+                    # manager gathers (unpartitions) the params of the current layer, then loads from
+                    # the state dict and then re-partitions them again
+                    with deepspeed.zero.GatheredParameters(params_to_gather,
+                                                           modifier_rank=0):
+                        if torch.distributed.get_rank() == 0:
+                            module._load_from_state_dict(*args)
+            else:
+                module._load_from_state_dict(*args)
+
+        for name, child in module._modules.items():
+            if child is not None:
+                load(child, state_dict, prefix + name + ".")
+
+    load(model_to_load, state_dict, prefix=start_prefix)
+    # Delete `state_dict` so it could be collected by GC earlier. Note that `state_dict` is a copy of the argument, so
+    # it's safe to delete it.
+    del state_dict
+
+    return error_msgs
+
+def create_critic_model(model_path,
+                        tokenizer,
+                        ds_config,
+                        num_padding_at_beginning=0,
+                        rlhf_training=False,
+                        dropout=None,
+                        zero_stage=0,
+                        compute_fp32_loss=False):
+    # OPT model family always put a padding token at the beginning of the sequence,
+    # we did not find this in other models but not sure if it is a general rule
+
+    critic_model = AutoModel.from_pretrained(model_path)
+
+    critic_model = RewardModel(
+        critic_model,
+        tokenizer,
+        num_padding_at_beginning=num_padding_at_beginning,
+        compute_fp32_loss=compute_fp32_loss)
+
+    if rlhf_training:
+        # load critic model from checkpoint
+
+        model_ckpt_path = os.path.join(model_path, 'pytorch_model.bin')
+        assert os.path.exists(
+            model_ckpt_path
+        ), f"Cannot find model checkpoint at {model_ckpt_path}"
+
+        model_ckpt_state_dict = torch.load(model_ckpt_path, map_location='cpu')
+    
+        # load critic model from checkpoint with zero-stage 3 compatibility
+        # this functionality may be moved to DS checkpoint load API in future
+        load_state_dict_into_model(critic_model,
+                                   model_ckpt_state_dict,
+                                   "",
+                                   zero_stage=zero_stage)
+
+    return critic_model
